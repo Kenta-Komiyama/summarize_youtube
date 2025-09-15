@@ -5,17 +5,17 @@ ignore_state_within_24h: true   # これが true なら 24h 内は既読でも�
 
 # 監視対象チャンネル（@, /c/, /user/, /channel/ 何でもOK）
 channels:
-  - https://www.youtube.com/@yobinori
+  - https://www.youtube.com/channel/UCqmWJJolqAgjIdLqK3zD1QQ
   - https://www.youtube.com/channel/UC8yHePe_RgUBE-waRWy6olw
   - https://www.youtube.com/channel/UC9CZ_z2S17I46EjoOtlYrRw
-  - https://www.youtube.com/@AIcia_Solid
-  - https://www.youtube.com/c/ryogakucho
+  - https://www.youtube.com/channel/UC2lJYodMaAfFeFQrGUwhlaQ
+  - https://www.youtube.com/channel/UC67Wr_9pA4I0glIxDt_Cpyw
   - https://www.youtube.com/c/joshstarmer
-  - https://www.youtube.com/c/3Blue1BrownJapan
-  - https://www.youtube.com/user/khanacademy
+  - https://www.youtube.com/channel/UCBevyiJ2ierZY-0yZhfLrmQ
+  - https://www.youtube.com/channel/UC4a-Gbdw7vOaccHmFo40b9g
   - https://www.youtube.com/channel/UCNU_lfiiWBdtULKOw6X0Dig
   - https://www.youtube.com/channel/UCh9nVJoWXmFb7sLApWGcLPQ
-  - https://www.youtube.com/c/deeplearningai
+  - https://www.youtube.com/channel/UCcIXc5mJsHVYTZR1maL5l9w
   - https://www.youtube.com/channel/UCbfYPyITQ-7l4upoX8nvctg
   - https://www.youtube.com/c/YannicKilcher
   - https://www.youtube.com/channel/UCHlNU7kIZhRgSbhHvFoy72w
@@ -23,5 +23,5 @@ channels:
   - https://www.youtube.com/channel/UCaG7jufgiw4p5mphPPVbqhw
   - https://www.youtube.com/channel/UCEixleMT76xDzoiEb9ZA7XA
   - https://www.youtube.com/channel/UCcdd3kS52T9Zyo-SWfj86bA
-  - https://www.youtube.com/@gakushikisaron
-  - https://www.youtube.com/@yurucom
+  - https://www.youtube.com/channel/UCC4NkFV-L-vVYD5z_Ei5dUA
+  - https://www.youtube.com/channel/UCpLu0KjNy616-E95gPx7LZg
