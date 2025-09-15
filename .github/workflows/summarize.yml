@@ -30,7 +30,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Prepare COOKIES (optional)
-        if: ${{ secrets.COOKIES_TXT != '' }}
         run: |
           echo "${{ secrets.COOKIES_TXT }}" > cookies.txt
 
