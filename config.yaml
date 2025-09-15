@@ -1,7 +1,7 @@
 # 言語・上限・動作モード
 lang: ja                # "ja" or "en"
 strict_captions_only: true    # true=字幕ある動画のみ処理（Whisper不使用）
-
+ignore_state_within_24h: true   # これが true なら 24h 内は既読でも処理
 
 # 監視対象チャンネル（@, /c/, /user/, /channel/ 何でもOK）
 channels:
