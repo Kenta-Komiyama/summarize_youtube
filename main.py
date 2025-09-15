@@ -1,17 +1,5 @@
-# main.py
-# - 直近24時間以内に公開された動画すべてを要約（本数制限なし）
-# - 字幕は yt_dlp で取得。無ければ Whisper にフォールバック
-# - 要約は gpt-5-mini
-# - 生成MDを out/ に保存し、今回分をZIP添付してGmail送信
-# - 処理済み videoId は state.json に記録（重複防止）
-
-import os
-import json
-import time
-import yaml
-import tempfile
-import traceback
-import shutil
+# main.py — 24h内を対象、必要に応じてstate無視、スキップ理由を詳細ログ
+import os, json, time, yaml, tempfile, traceback, shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -20,17 +8,14 @@ from subs import fetch_subtitles_via_ytdlp_robust
 from summarize import summarize
 from mailer import send_mail
 
-OPENAI_API_KEY  = os.environ["OPENAI_API_KEY"]
-YOUTUBE_API_KEY = os.environ["YOUTUBE_API_KEY"]
-
 CONFIG = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
 LANG   = CONFIG.get("lang", "ja")
 STRICT = bool(CONFIG.get("strict_captions_only", False))
 CHANNELS = CONFIG["channels"]
+IGNORE_STATE_24H = bool(CONFIG.get("ignore_state_within_24h", False))
 
 STATE_PATH = Path("state.json")
-OUT_DIR = Path("out")
-OUT_DIR.mkdir(exist_ok=True)
+OUT_DIR = Path("out"); OUT_DIR.mkdir(exist_ok=True)
 
 def load_state():
     if not STATE_PATH.exists():
@@ -44,9 +29,10 @@ def parse_rfc3339(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 def transcribe_with_whisper(video_id: str) -> str:
+    # 音声DL→Whisper
     from subs import Path as _Path, yt_dlp
     from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
         ydl_opts = {
@@ -67,21 +53,23 @@ def transcribe_with_whisper(video_id: str) -> str:
         return tr if isinstance(tr, str) else str(tr)
 
 def main():
-    yt = build_yt(YOUTUBE_API_KEY)
+    yt = build_yt(os.environ["YOUTUBE_API_KEY"])
     state = load_state()
     processed = set(state.get("processed", []))
     all_candidates = []
+
+    print(f"[INFO] STRICT_CAPTIONS_ONLY={STRICT}  IGNORE_STATE_24H={IGNORE_STATE_24H}")
+    print(f"[INFO] processed(len) in state.json = {len(processed)}")
 
     # 1) チャンネル解決
     channel_ids = []
     for ch in CHANNELS:
         try:
-            cid = resolve_channel_id(yt, ch)
-            channel_ids.append(cid)
+            cid = resolve_channel_id(yt, ch); channel_ids.append(cid)
         except Exception as e:
             print(f"[WARN] resolve failed: {ch} -> {e}")
 
-    # 2) 新着候補収集（件数制限なし、最大50件）
+    # 2) 候補収集（各ch最大50件）
     for cid in channel_ids:
         try:
             uploads = get_uploads_playlist_id(yt, cid)
@@ -91,38 +79,52 @@ def main():
         except Exception as e:
             print(f"[WARN] list videos failed for {cid}: {e}")
 
-    # 3) 重複除去 & 公開日の新しい順
+    # 3) 重複除去 & 新しい順
     uniq = {v["video_id"]: v for v in all_candidates}
     videos = sorted(uniq.values(), key=lambda x: x["published_at"], reverse=True)
 
-    # 4) 直近24時間フィルタ
+    # 4) 24hフィルタ（UTC）
     now_utc = datetime.now(timezone.utc)
     cutoff = now_utc - timedelta(hours=24)
     videos = [v for v in videos if parse_rfc3339(v["published_at"]) >= cutoff]
     print(f"[INFO] Filtering to last 24h. cutoff(UTC)={cutoff.isoformat()}  candidates={len(videos)}")
 
-    # 5) 処理ループ（制限なし）
-    created_files: list[Path] = []
+    created_files = []
 
     for v in videos:
         vid = v["video_id"]
-        if vid in processed:
+        pub = v["published_at"]
+
+        # stateの扱い
+        if (not IGNORE_STATE_24H) and vid in processed:
+            print(f"[SKIP] already processed (state.json): {vid}  {v['title']}")
             continue
+        if IGNORE_STATE_24H and vid in processed:
+            print(f"[INFO] ignoring state (24h mode): will reprocess {vid}")
 
-        print(f"\n[INFO] Processing: {v['title']} ({vid}) publishedAt={v['published_at']}")
+        print(f"\n[INFO] Processing: {v['title']} ({vid}) publishedAt={pub}")
+
         try:
+            # 5-1) 字幕（強化版）
             segs = fetch_subtitles_via_ytdlp_robust(vid, langs=['ja','en'])
-            if segs:
+            if segs and any(s.get('text') for s in segs):
                 transcript_text = "\n".join(s.get("text","") for s in segs if s.get("text"))
+                print(f"[OK] subtitles collected: chars={len(transcript_text)}")
             else:
+                print(f"[INFO] no subtitles via yt_dlp")
                 if STRICT:
-                    print("[SKIP] no captions & STRICT_CAPTIONS_ONLY=True")
-                    processed.add(vid)
+                    print("[SKIP] STRICT_CAPTIONS_ONLY=True → whisper未使用でスキップ")
+                    # STRICTのときも敢えて既読にしない方がデバッグしやすい
+                    # processed.add(vid)  # ←必要なら有効化
                     continue
+                print("[INFO] fallback to Whisper…")
                 transcript_text = transcribe_with_whisper(vid)
+                print(f"[OK] whisper transcript: chars={len(transcript_text)}")
 
+            # 5-2) 要約
             summary_md = summarize(v, transcript_text, lang=LANG)
 
+            # 5-3) 保存
             safe_title = "".join(c for c in v["title"] if c not in '\\/:*?"<>|').strip()[:80]
             out_path = OUT_DIR / f"{v['published_at'][:10]}_{safe_title}_{vid}.md"
             out_md = (
@@ -136,33 +138,30 @@ def main():
             created_files.append(out_path)
 
             processed.add(vid)
-            time.sleep(1.0)
+            time.sleep(0.8)
 
         except Exception as e:
             print(f"[WARN] failed: {vid} -> {e}")
             traceback.print_exc()
+            # 失敗時は processed に入れない（次回再挑戦）
             continue
 
+    # 6) state保存
     state["processed"] = sorted(processed)
     save_state(state)
 
-    # 6) メール送信
+    # 7) メール送信
+    from zipfile import ZipFile
     subject = f"[YouTube要約] 24h内 {len(created_files)}件更新"
     if not created_files:
-        body = "直近24時間に新規で要約対象となる動画はありませんでした。"
-        send_mail(subject, body_text=body, attachments=None)
+        send_mail(subject, body_text="直近24時間の新規要約はありませんでした。", attachments=None)
     else:
         tmp_zip = Path("out_latest_run.zip")
-        with tempfile.TemporaryDirectory() as td:
-            staging = Path(td) / "latest"
-            staging.mkdir(parents=True, exist_ok=True)
+        with ZipFile(tmp_zip, "w") as z:
             for p in created_files:
-                shutil.copy2(p, staging / p.name)
-            shutil.make_archive(base_name=tmp_zip.stem, format="zip", root_dir=td, base_dir="latest")
-
+                z.write(p, arcname=p.name)
         lines = [f"- {p.stem}  https://www.youtube.com/watch?v={p.stem.split('_')[-1]}" for p in created_files]
         body = "今回（直近24時間）生成した要約ファイル一覧:\n\n" + "\n".join(lines)
-
         send_mail(subject, body_text=body, attachments=[str(tmp_zip)])
 
     print(f"\n[DONE] summarized {len(created_files)} video(s) within last 24h. Email sent.")
