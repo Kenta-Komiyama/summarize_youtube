@@ -1,0 +1,53 @@
+name: YouTube Summarizer
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 毎日 JST 朝9時（= UTC 4時)に実行
+    - cron: "0 19 * * *"
+
+permissions:
+  contents: write   # state.json / out/ をコミットするため
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps (ffmpeg for yt_dlp postprocessing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python deps
+        run: |
+          pip install -r requirements.txt
+
+      - name: Prepare COOKIES (optional)
+        if: ${{ secrets.COOKIES_TXT != '' }}
+        run: |
+          echo "${{ secrets.COOKIES_TXT }}" > cookies.txt
+
+      - name: Run summarizer
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        run: |
+          python main.py
+
+      - name: Commit & push results
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: "out state.json"
+          message: "chore: update summaries [skip ci]"
+          default_author: github_actions
