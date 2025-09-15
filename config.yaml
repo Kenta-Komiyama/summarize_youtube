@@ -1,0 +1,28 @@
+# 言語・上限・動作モード
+lang: ja                # "ja" or "en"
+strict_captions_only: true    # true=字幕ある動画のみ処理（Whisper不使用）
+max_videos_per_run: 6
+per_channel_limit: 3
+
+# 監視対象チャンネル（@, /c/, /user/, /channel/ 何でもOK）
+channels:
+  - https://www.youtube.com/@yobinori
+  - https://www.youtube.com/channel/UC8yHePe_RgUBE-waRWy6olw
+  - https://www.youtube.com/channel/UC9CZ_z2S17I46EjoOtlYrRw
+  - https://www.youtube.com/@AIcia_Solid
+  - https://www.youtube.com/c/ryogakucho
+  - https://www.youtube.com/c/joshstarmer
+  - https://www.youtube.com/c/3Blue1BrownJapan
+  - https://www.youtube.com/user/khanacademy
+  - https://www.youtube.com/channel/UCNU_lfiiWBdtULKOw6X0Dig
+  - https://www.youtube.com/channel/UCh9nVJoWXmFb7sLApWGcLPQ
+  - https://www.youtube.com/c/deeplearningai
+  - https://www.youtube.com/channel/UCbfYPyITQ-7l4upoX8nvctg
+  - https://www.youtube.com/c/YannicKilcher
+  - https://www.youtube.com/channel/UCHlNU7kIZhRgSbhHvFoy72w
+  - https://www.youtube.com/channel/UC9V4eJBNx_hOieGG51NZ6nA
+  - https://www.youtube.com/channel/UCaG7jufgiw4p5mphPPVbqhw
+  - https://www.youtube.com/channel/UCEixleMT76xDzoiEb9ZA7XA
+  - https://www.youtube.com/channel/UCcdd3kS52T9Zyo-SWfj86bA
+  - https://www.youtube.com/@gakushikisaron
+  - https://www.youtube.com/@yurucom
