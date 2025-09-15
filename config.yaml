@@ -1,8 +1,7 @@
 # 言語・上限・動作モード
 lang: ja                # "ja" or "en"
 strict_captions_only: true    # true=字幕ある動画のみ処理（Whisper不使用）
-max_videos_per_run: 6
-per_channel_limit: 3
+
 
 # 監視対象チャンネル（@, /c/, /user/, /channel/ 何でもOK）
 channels:
