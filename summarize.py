@@ -39,6 +39,5 @@ def summarize(meta: dict, transcript_text: str, lang="ja") -> str:
         model="gpt-5-mini",
         messages=[{"role":"system","content":SYSTEM_PROMPT},
                   {"role":"user","content":prompt}],
-        temperature=0.2,
     )
     return resp.choices[0].message.content.strip()
