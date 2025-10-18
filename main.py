@@ -36,7 +36,13 @@ def transcribe_with_whisper(video_id: str) -> str:
 
     def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
         ydl_opts = {
-            "format": "bestaudio/best",
+            # "format": "bestaudio/best",
+            "format": "best[ext=mp4]/best",   # MP4優先で最良
+            "merge_output_format": "mp4",
+            "quiet": True,
+            "writesubtitles": True,
+            "subtitleslangs": ["ja","en"],
+            "skip_download": True,
             "outtmpl": str(_Path(out_dir)/f"{video_id}.%(ext)s"),
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
             "quiet": True, "no_warnings": True,
