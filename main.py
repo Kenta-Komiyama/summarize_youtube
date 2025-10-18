@@ -1,5 +1,12 @@
-# main.py — 24h内を対象、必要に応じてstate無視、スキップ理由を詳細ログ
-import os, json, time, yaml, tempfile, traceback, shutil
+# main.py — 直近24hの新着を対象。字幕が取れなければ Whisper にフォールバック。
+# - フォーマット未提供やBot判定による失敗に強い
+# - mp3未生成時は実ファイルを検出して ffmpeg で手動変換
+# 前提:
+#   - OPENAI_API_KEY, YOUTUBE_API_KEY を環境変数で設定
+#   - GitHub Actions 等では 'sudo apt-get install -y ffmpeg' を実行しておく
+#   - cookies.txt (任意) があればルート直下に置くと自動使用
+
+import os, json, time, yaml, tempfile, traceback
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -10,9 +17,9 @@ from mailer import send_mail
 
 CONFIG = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
 LANG   = CONFIG.get("lang", "ja")
-STRICT = bool(CONFIG.get("strict_captions_only", False))
+STRICT = bool(CONFIG.get("strict_captions_only", False))       # Trueだと字幕なしはスキップ
 CHANNELS = CONFIG["channels"]
-IGNORE_STATE_24H = bool(CONFIG.get("ignore_state_within_24h", False))
+IGNORE_STATE_24H = bool(CONFIG.get("ignore_state_within_24h", False))  # Trueなら24h内はstate無視で再処理
 
 STATE_PATH = Path("state.json")
 OUT_DIR = Path("out"); OUT_DIR.mkdir(exist_ok=True)
@@ -28,27 +35,29 @@ def save_state(state):
 def parse_rfc3339(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
-# ---- Whisper用: 音声だけを安全にDLするヘルパ ----
+# ---------- Whisper用: 音声DL（堅牢版） ----------
 def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
     """
-    YouTube から音声のみをダウンロードして mp3 に変換し、ファイルパスを返す。
-    cookies.txt があれば自動使用。
+    YouTubeから音声を取得して mp3 を返す。
+    - まず yt_dlp + FFmpegExtractAudio で mp3化を試みる
+    - mp3ができなければ、落ちた実ファイルを検出して ffmpeg で手動変換
+    - それでも無ければ FileNotFoundError
     """
-    import yt_dlp
+    from pathlib import Path
+    import subprocess, yt_dlp
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # ここで最終的に生成される mp3 のパス
-    out_file = out_path / f"{video_id}.mp3"
     url = f"https://www.youtube.com/watch?v={video_id}"
+    base_tmpl = str(out_path / f"{video_id}.%(ext)s")
 
     ydl_opts = {
-        "format": "bestaudio/best",       # 音声優先で取得
-        "outtmpl": str(out_file),         # mp3 で上書き保存（postprocessorで変換）
+        "format": "bestaudio/best",
+        "outtmpl": base_tmpl,                 # まずは元拡張子で保存
         "quiet": True,
         "noplaylist": True,
-        "ignore_no_formats_error": True,  # フォーマット未提供でも落ちない
+        "ignore_no_formats_error": True,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -57,21 +66,57 @@ def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
             }
         ],
     }
-
-    # cookies.txt（任意）を自動使用
     if Path("cookies.txt").exists():
         ydl_opts["cookiefile"] = "cookies.txt"
 
-    # 取得
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except yt_dlp.utils.DownloadError as e:
+        print(f"[WARN] yt_dlp download error: {e}")
 
-    return str(out_file)
+    # 2) mp3 ができていれば返す
+    mp3_path = out_path / f"{video_id}.mp3"
+    if mp3_path.exists() and mp3_path.stat().st_size > 0:
+        return str(mp3_path)
+
+    # 3) 代替: 落ちた実ファイルを検出して手動で mp3 変換
+    cand = None
+    for ext in ("webm", "m4a", "mp4", "opus", "wav"):
+        p = out_path / f"{video_id}.{ext}"
+        if p.exists() and p.stat().st_size > 0:
+            cand = p
+            break
+    if not cand:
+        files = sorted(out_path.glob(f"{video_id}.*"), key=lambda x: x.stat().st_mtime, reverse=True)
+        if files:
+            cand = files[0]
+
+    if cand:
+        mp3_tmp = out_path / f"{video_id}.mp3"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(cand), "-vn", "-acodec", "libmp3lame", "-ab", "192k", str(mp3_tmp)],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if mp3_tmp.exists() and mp3_tmp.stat().st_size > 0:
+                return str(mp3_tmp)
+        except FileNotFoundError:
+            raise RuntimeError("ffmpeg が見つかりません。CIでは apt-get install -y ffmpeg を追加してください。")
+        except subprocess.CalledProcessError as e:
+            print(f"[WARN] ffmpeg transcode failed: {e}")
+
+    # 4) ここまでで無理なら音声取得失敗
+    raise FileNotFoundError(
+        f"音声取得/変換に失敗（video_id={video_id}）。cookies.txtの適用、Bot判定、地域/年齢制限、フォーマット提供状況を確認してください。"
+    )
 
 def transcribe_with_whisper(video_id: str) -> str:
     """
     音声をダウンロードして Whisper API で文字起こし。
-    OPENAI_API_KEY が必要。
+    OPENAI_API_KEY 必須。返り値はプレーンテキスト。
     """
     from openai import OpenAI
 
@@ -83,9 +128,7 @@ def transcribe_with_whisper(video_id: str) -> str:
 
     with tempfile.TemporaryDirectory() as td:
         mp3_path = download_audio_for_whisper(video_id, td)
-        # Whisper API へ
         with open(mp3_path, "rb") as f:
-            # 返り値は text 形式で受け取る
             tr = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
@@ -93,6 +136,7 @@ def transcribe_with_whisper(video_id: str) -> str:
             )
         return tr if isinstance(tr, str) else str(tr)
 
+# --------------- メイン処理 ---------------
 def main():
     yt = build_yt(os.environ["YOUTUBE_API_KEY"])
     state = load_state()
@@ -102,15 +146,16 @@ def main():
     print(f"[INFO] STRICT_CAPTIONS_ONLY={STRICT}  IGNORE_STATE_24H={IGNORE_STATE_24H}")
     print(f"[INFO] processed(len) in state.json = {len(processed)}")
 
-    # 1) チャンネル解決
+    # 1) チャンネル解決（可能なら UC… で config.yaml に固定して search.list を避ける）
     channel_ids = []
     for ch in CHANNELS:
         try:
-            cid = resolve_channel_id(yt, ch); channel_ids.append(cid)
+            cid = resolve_channel_id(yt, ch)
+            channel_ids.append(cid)
         except Exception as e:
             print(f"[WARN] resolve failed: {ch} -> {e}")
 
-    # 2) 候補収集（各ch最大50件）
+    # 2) 候補収集（各ch 最大50件）
     for cid in channel_ids:
         try:
             uploads = get_uploads_playlist_id(yt, cid)
@@ -124,7 +169,7 @@ def main():
     uniq = {v["video_id"]: v for v in all_candidates}
     videos = sorted(uniq.values(), key=lambda x: x["published_at"], reverse=True)
 
-    # 4) 24hフィルタ（UTC）
+    # 4) 直近24hフィルタ（UTC）
     now_utc = datetime.now(timezone.utc)
     cutoff = now_utc - timedelta(hours=24)
     videos = [v for v in videos if parse_rfc3339(v["published_at"]) >= cutoff]
@@ -132,11 +177,12 @@ def main():
 
     created_files = []
 
+    # 5) 各動画処理
     for v in videos:
         vid = v["video_id"]
         pub = v["published_at"]
 
-        # stateの扱い
+        # state の扱い
         if (not IGNORE_STATE_24H) and vid in processed:
             print(f"[SKIP] already processed (state.json): {vid}  {v['title']}")
             continue
@@ -146,7 +192,7 @@ def main():
         print(f"\n[INFO] Processing: {v['title']} ({vid}) publishedAt={pub}")
 
         try:
-            # 5-1) 字幕（強化版）
+            # 5-1) 字幕（yt_dlpを多段で試行する実装を subs.py に委譲）
             segs = fetch_subtitles_via_ytdlp_robust(vid, langs=['ja','en'])
             if segs and any(s.get('text') for s in segs):
                 transcript_text = "\n".join(s.get("text","") for s in segs if s.get("text"))
@@ -160,7 +206,7 @@ def main():
                 transcript_text = transcribe_with_whisper(vid)
                 print(f"[OK] whisper transcript: chars={len(transcript_text)}")
 
-            # 5-2) 要約
+            # 5-2) 要約生成
             summary_md = summarize(v, transcript_text, lang=LANG)
 
             # 5-3) 保存
