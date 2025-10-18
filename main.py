@@ -36,17 +36,43 @@ def transcribe_with_whisper(video_id: str) -> str:
 
     def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
         ydl_opts = {
-            # "format": "bestaudio/best",
-            "format": "best[ext=mp4]/best",   # MP4優先で最良
-            "merge_output_format": "mp4",
-            "quiet": True,
+            "skip_download": True,                 # 本体は落とさない
             "writesubtitles": True,
-            "subtitleslangs": ["ja","en"],
-            "skip_download": True,
-            "outtmpl": str(_Path(out_dir)/f"{video_id}.%(ext)s"),
-            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
-            "quiet": True, "no_warnings": True,
+            "writeautomaticsub": auto,             # ここは既存ロジックの変数
+            "subtitleslangs": [lang],              # 1言語ずつ
+            "subtitlesformat": "vtt" if fmt == "vtt" else "json3",
+        
+            # 🔧 フォーマット解決まわり（ここが重要）
+            "format": "best[ext=mp4]/best/bestaudio/bestvideo",  # なるべく何か1つ見つかればOK
+            "ignore_no_formats_error": True,       # ← フォーマットが見つからなくても処理を続行
+            "simulate": True,                      # 実DLはしない（メタと字幕取得に集中）
+            "noplaylist": True,
+        
+            # ネットワーク/リトライ
+            "retries": 3,
+            "fragment_retries": 3,
+            "ratelimit": 5_000_000,
+            "throttledratelimit": 1_000_000,
+        
+            # ヘッダ/クライアント
+            "http_headers": {
+                "User-Agent": ua,
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            },
+            "extractor_args": {
+                "youtube": {
+                    "player_client": clients  # ["android"] / ["web"] / ["ios"]
+                }
+            },
+        
+            # ログ抑制
+            "quiet": True,
+            "no_warnings": True,
         }
+        if cookies_path:
+            ydl_opts["cookiefile"] = cookies_path
+        if http_proxy:
+            ydl_opts["proxy"] = http_proxy
         url = f"https://www.youtube.com/watch?v={video_id}"
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
