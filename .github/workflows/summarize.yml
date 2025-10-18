@@ -32,6 +32,7 @@ jobs:
       - name: Prepare COOKIES (optional)
         run: |
           echo "${{ secrets.COOKIES_TXT }}" > cookies.txt
+          echo "cookies.txt size: $(wc -c < cookies.txt)"
 
       - name: Run summarizer
         env:
