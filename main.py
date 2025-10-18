@@ -28,36 +28,69 @@ def save_state(state):
 def parse_rfc3339(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
-def transcribe_with_whisper(video_id: str) -> str:
-    # 音声DL→Whisper
-    from subs import Path as _Path, yt_dlp
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+# ---- Whisper用: 音声だけを安全にDLするヘルパ ----
+def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
+    """
+    YouTube から音声のみをダウンロードして mp3 に変換し、ファイルパスを返す。
+    cookies.txt があれば自動使用。
+    """
+    import yt_dlp
 
-    def download_audio_for_whisper(video_id: str, out_dir: str) -> str:
-        ydl_opts = {
-            "format": "bestaudio/best",       # 音声だけを取る
-            "outtmpl": str(out_file),
-            "quiet": True,
-            "noplaylist": True,
-            "ignore_no_formats_error": True,  # ← formatエラーでも落とさない
-            "postprocessors": [
-                {   # 音声を mp3 に変換
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ]
-        }
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-        return str(_Path(out_dir)/f"{video_id}.mp3")
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # ここで最終的に生成される mp3 のパス
+    out_file = out_path / f"{video_id}.mp3"
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    ydl_opts = {
+        "format": "bestaudio/best",       # 音声優先で取得
+        "outtmpl": str(out_file),         # mp3 で上書き保存（postprocessorで変換）
+        "quiet": True,
+        "noplaylist": True,
+        "ignore_no_formats_error": True,  # フォーマット未提供でも落ちない
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ],
+    }
+
+    # cookies.txt（任意）を自動使用
+    if Path("cookies.txt").exists():
+        ydl_opts["cookiefile"] = "cookies.txt"
+
+    # 取得
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+    return str(out_file)
+
+def transcribe_with_whisper(video_id: str) -> str:
+    """
+    音声をダウンロードして Whisper API で文字起こし。
+    OPENAI_API_KEY が必要。
+    """
+    from openai import OpenAI
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY が設定されていません。Whisperを使うには必須です。")
+
+    client = OpenAI(api_key=api_key)
 
     with tempfile.TemporaryDirectory() as td:
-        mp3 = download_audio_for_whisper(video_id, td)
-        with open(mp3, "rb") as f:
-            tr = client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
+        mp3_path = download_audio_for_whisper(video_id, td)
+        # Whisper API へ
+        with open(mp3_path, "rb") as f:
+            # 返り値は text 形式で受け取る
+            tr = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="text",
+            )
         return tr if isinstance(tr, str) else str(tr)
 
 def main():
@@ -122,8 +155,6 @@ def main():
                 print(f"[INFO] no subtitles via yt_dlp")
                 if STRICT:
                     print("[SKIP] STRICT_CAPTIONS_ONLY=True → whisper未使用でスキップ")
-                    # STRICTのときも敢えて既読にしない方がデバッグしやすい
-                    # processed.add(vid)  # ←必要なら有効化
                     continue
                 print("[INFO] fallback to Whisper…")
                 transcript_text = transcribe_with_whisper(vid)
