@@ -33,7 +33,8 @@ def summarize(meta: dict, transcript_text: str, lang="ja") -> str:
         channel_title=meta["channel_title"],
         published_at=meta["published_at"],
         video_id=meta["video_id"],
-        # transcript=transcript_text[:60000],
+        # transcript=transcript_text[:60000],26337646
+        transcript=transcript_text[:10000000],
     )
     resp = client.chat.completions.create(
         model="gpt-5-mini",
