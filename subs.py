@@ -30,10 +30,27 @@ _UA_POOL = [
 
 # YouTube の内部クライアント指定を切替（yt-dlp の extractor_args）
 _CLIENT_CANDIDATES = [
+    ["tv_embedded"],
     ["android"],  # まず android
     ["web"],      # ダメなら web
     ["ios"],      # さらに ios
 ]
+
+
+def _pick_cookies_from_browser():
+    env_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+    if env_browser:
+        return (env_browser,)
+
+    for browser in ("chrome", "edge", "firefox", "safari"):
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "cookiesfrombrowser": (browser,)}) as ydl:
+                ydl.cookiejar
+            return (browser,)
+        except Exception:
+            continue
+
+    return None
 
 # 429 に強い指数バックオフ
 def _sleep_backoff(base: float, attempt: int):
@@ -146,7 +163,7 @@ def fetch_subtitles_via_ytdlp_robust(
     http_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
 
     # cookies-from-browser（任意）: chrome / edge など
-    cookies_from_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+    cookies_from_browser = _pick_cookies_from_browser()
 
     # 字幕フォーマット候補（指定しても実際は別拡張子で出ることがある）
     fmt_candidates = ["vtt", "json3"]
@@ -208,7 +225,7 @@ def fetch_subtitles_via_ytdlp_robust(
                                 if cookies_path:
                                     ydl_opts["cookiefile"] = cookies_path
                                 elif cookies_from_browser:
-                                    ydl_opts["cookiesfrombrowser"] = (cookies_from_browser,)
+                                    ydl_opts["cookiesfrombrowser"] = cookies_from_browser
 
                                 if http_proxy:
                                     ydl_opts["proxy"] = http_proxy
