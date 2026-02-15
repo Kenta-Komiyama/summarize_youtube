@@ -22,6 +22,24 @@ OUT_DIR = Path("out"); OUT_DIR.mkdir(exist_ok=True)
 # =========================
 # 共通 yt_dlp 強化設定
 # =========================
+def _pick_cookies_from_browser():
+    env_browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
+    if env_browser:
+        return (env_browser,)
+
+    # ローカル実行時の救済: 明示指定がなくても主要ブラウザを順に試す
+    for browser in ("chrome", "edge", "firefox", "safari"):
+        try:
+            import yt_dlp
+            with yt_dlp.YoutubeDL({"quiet": True, "cookiesfrombrowser": (browser,)}) as ydl:
+                ydl.cookiejar  # 読み込みトリガー
+            return (browser,)
+        except Exception:
+            continue
+
+    return None
+
+
 def build_ydl_opts(base_opts=None):
     opts = base_opts.copy() if base_opts else {}
 
@@ -40,7 +58,7 @@ def build_ydl_opts(base_opts=None):
         },
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"]
+                "player_client": ["tv_embedded", "android", "ios"]
             }
         }
     })
@@ -48,9 +66,9 @@ def build_ydl_opts(base_opts=None):
     if Path("cookies.txt").exists():
         opts["cookiefile"] = "cookies.txt"
     else:
-        browser = os.environ.get("YTDLP_COOKIES_FROM_BROWSER")
-        if browser:
-            opts["cookiesfrombrowser"] = (browser,)
+        browser_tuple = _pick_cookies_from_browser()
+        if browser_tuple:
+            opts["cookiesfrombrowser"] = browser_tuple
 
     return opts
 
